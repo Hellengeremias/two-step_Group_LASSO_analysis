@@ -1,0 +1,504 @@
+---
+title: "two-step group lasso results"
+author: "Hellen Geremias dos Santos"
+date: "09/08/2022"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+```
+
+# First step
+
+- data set (results from 2000 iterations)
+```{r}
+matrix_bootstrap.2 <- readRDS("selected/selected_dt.txt")
+
+B <- ncol(matrix_bootstrap.2)
+names(matrix_bootstrap.2)[1:B] <- c(paste(colnames(matrix_bootstrap.2), 1:B, sep = "_"))
+```
+
+- Lambda ($\lambda_{CV}$ distribution)
+```{r}
+lambda_gl <- as.numeric(t(matrix_bootstrap.2[1,-ncol(matrix_bootstrap.2)]))
+lambda_gl <- as.data.frame(lambda_gl)
+
+summary(lambda_gl$lambda_gl)
+br <- seq(0.003, 0.015, 0.001)
+g1b <- 
+  ggplot(lambda_gl, aes(x = lambda_gl)) +
+  geom_histogram(breaks = br, fill = "white", colour = "black", position = "identity") +
+  ylab("Count") +
+  scale_x_continuous(breaks = br) +
+   scale_y_continuous(breaks = c(0, 50, 100, 150, 200, 250, 300, 350, 400, 450), limits = c(0, 450)) +
+  ggtitle("lambda") +
+  xlab("") +
+  theme_classic(base_line_size = 0.3, base_rect_size = 0.3, base_size = 10) 
+plot(g1b)
+```
+
+- reduced data (only SNPs, without dummy variables)
+```{r}
+matrix_bootstrap.2$ID <- row.names(matrix_bootstrap.2)
+matrix_bootstrap.2$ID <- stringr::str_remove(matrix_bootstrap.2$ID, "_0")
+matrix_bootstrap.2$ID <- stringr::str_remove(matrix_bootstrap.2$ID, "_1")
+matrix_bootstrap.2$ID <- stringr::str_remove(matrix_bootstrap.2$ID, "_2")
+
+dataframe_subset.2 <- dplyr::distinct(matrix_bootstrap.2[-c(1,2),], ID, .keep_all = TRUE)
+row.names(dataframe_subset.2) <- dataframe_subset.2$ID
+soma_linha <- rowSums(abs(dataframe_subset.2[,-ncol(dataframe_subset.2)]), na.rm = TRUE)
+dataframe_subset.2$soma <- soma_linha
+```
+
+- number of selected SNPs in each iteraction
+```{r, results = 'hold', warning = FALSE, message = FALSE, echo = FALSE, fig.dim= c(8, 5), fig.align = 'center', cache = FALSE}
+n_var_gl <- NULL
+i = 1
+for(i in 1:B){
+  n_var_gl[i] <- length(which(dataframe_subset.2[, i] != 0 & !is.na(dataframe_subset.2[, i])))  
+}
+n_var_gl <- as.data.frame(n_var_gl)
+
+summary(n_var_gl$n_var_gl)
+
+table(n_var_gl$n_var_gl)
+
+mean(n_var_gl$n_var_gl) + 3*sd(n_var_gl$n_var_gl)
+```
+
+- visualization
+```{r}
+br <- seq(140, 230, 5)
+g1a <- 
+  ggplot(n_var_gl, aes(x = n_var_gl)) +
+  geom_bar() +
+  geom_histogram(breaks = br, fill = "white", colour = "black", position = "identity") +
+  ylab("absolute frequency") +
+  scale_x_continuous(breaks = br) +
+  scale_y_continuous(breaks = c(0, 50, 100, 150, 200, 250, 300, 350), limits = c(0, 350)) +
+  #ggtitle("number of selected SNPs") +
+  xlab("number of selected variables") +
+  theme_classic(base_line_size = 0.3, base_rect_size = 0.3, base_size = 10)
+plot(g1a)
+
+ggsave(file = "n_SNPs_step1_2022.jpeg", plot = g1a,
+       device = "jpeg", dpi = 300, units = "cm", width = 20, height = 15)
+
+# ggsave(file = "n_SNPs_step1.pdf", plot = g1a,
+#        device = "pdf", dpi = 300, units = "cm", width = 30, height = 20)
+```
+
+- SNPs summarise
+```{r}
+total <- NULL
+not_available <- NULL
+zero <- NULL
+i = 1
+for(i in 1:nrow(dataframe_subset.2)){
+      not_available[i] <- table(!is.na(dataframe_subset.2[i,1:B]))[2]
+      zero[i] <- table(dataframe_subset.2[i,1:B] == 0)[which(names(table(dataframe_subset.2[i,1:B] == 0)) == "TRUE")]
+      total[i] <- sum(table(dataframe_subset.2[i,1:B] == 0))
+}
+
+total_df <- data.frame(pos = seq(1:length(total)), 
+                       total = total, zero = zero, nonzero = total-zero, not_available = not_available)
+total_df$pos[which(is.na(total_df$total))]
+total_df$p_selecao <- total_df$total/2000
+total_df$p_nonzero <- total_df$nonzero/total_df$total
+total_df$ID <- dataframe_subset.2$ID
+
+saveRDS(total_df, "total_df.txt")
+```
+
+- aux objects to identify SNPs
+```{r}
+rs <- read.table("selected_rs_092021.txt", header = TRUE)
+association_analysis <- readxl::read_xlsx("association_analysis_SNP_info2.xlsx")
+association_analysis <- data.frame(association_analysis)
+association_analysis <- dplyr::select(association_analysis, ID, rs, chromosome, ALS)
+association_analysis <- distinct(association_analysis)
+association_analysis$rs <- stringi::stri_trim_both(as.character(association_analysis$rs))
+vec <- readRDS("vec.txt")
+names(vec)[2] <- "ID"
+total_df <- readRDS("total_df.txt")
+length(total_df$nonzero[which(total_df$nonzero == 0)])/nrow(total_df)
+
+table(total_df$nonzero)
+prop.table(table(total_df$nonzero))
+```
+
+- Proportion of times each coefficient is zero in the bootstrap distribution (only SNPs with zero frequency < 0.3)
+```{r, warning=FALSE, echo=FALSE, results='hide', message=FALSE}
+row_names_ID <- row.names(matrix_bootstrap.2)
+row_names_ID <- as.data.frame(row_names_ID)
+row_names_ID$ID <- matrix_bootstrap.2$ID
+
+names_not_02 <- total_df$ID[which(total_df$nonzero > 344)]
+names_not_02 <- as.data.frame(names_not_02)
+names(names_not_02)[1] <- "ID"
+names_not_02 <- dplyr::left_join(names_not_02, row_names_ID, by = "ID")
+```
+
+- most frequently selected SNPs 
+```{r}
+zeros_prop_r <- total_df %>%  filter(ID %in% names_not_02$ID)
+zeros_prop_r <- zeros_prop_r[order(zeros_prop_r$p_nonzero, decreasing = FALSE),]
+
+zeros_prop_r <- left_join(zeros_prop_r, rs, by = "ID")
+zeros_prop_r <- transform(zeros_prop_r,
+                          rs = reorder(rs, p_nonzero))
+
+f1 <- ggplot(data = zeros_prop_r) +
+  geom_col(mapping = aes(x = rs, y = 1 - p_nonzero), alpha = .3) +
+  geom_hline(yintercept = c(.3), lty = 2, size = .25, col = "gray60") +
+   xlab("SNP") +
+  ylab("Bootstrap selection frequency (first step Group LASSO)") +
+  scale_y_continuous(breaks = c(0, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1), limits = c(0,1)) +
+  coord_flip() +
+  theme_classic()
+
+plot(f1)
+
+ggsave(file = "selected_SNP_2022.jpeg", plot = f1,
+       device = "jpeg", dpi = 300, units = "cm", width = 20, height = 15)
+```
+
+ Boxplots of $P(I) \cdot B$ bootstrap realizations of $\hat{\beta}^*(\hat{\lambda}_{CV})$ obtained by the nonparametric bootstrap (most frequently selected SNPs)
+```{r, results = 'hold', warning = FALSE, message = FALSE, echo = FALSE, fig.dim= c(8, 5), fig.align = 'center', cache = FALSE}
+matrix_not_0_r2 <- matrix_bootstrap.2[which(row.names(matrix_bootstrap.2) %in% names_not_02$row_names_ID),]
+
+g_m <- matrix_not_0_r2 %>%
+  select(-c(ID)) %>%
+  gather()
+
+g_m$ID_c <- rep(row.names(matrix_not_0_r2), 2000)
+g_m$ID <- g_m$ID_c
+g_m$ID <- stringr::str_remove(g_m$ID, "_0")
+g_m$ID <- stringr::str_remove(g_m$ID, "_1")
+g_m$ID <- stringr::str_remove(g_m$ID, "_2")
+g_m <- left_join(g_m, rs, by = "ID")
+
+i =1
+for(i in 1: nrow(g_m)){
+  char_n <- nchar(g_m$ID_c[i])
+  g_m$cat[i] <- substr(g_m$ID_c[i], start = (char_n-2), stop = char_n)
+  g_m$allele[i] <- substr(g_m$ID_c[i], start = char_n, stop = char_n)
+}
+g_m$ID_f <- as.factor(paste(g_m$rs, g_m$cat, sep = "_"))
+
+levels_a <- data.frame(a = rep(as.character(zeros_prop_r$rs), each = 3))
+levels_b <- data.frame(b = levels(g_m$ID_f))
+levels_b$b <- as.character(levels_b$b)
+
+i =1
+for(i in 1: nrow(levels_b)){
+  char_n <- nchar(levels_b$b[i])
+  levels_b$a[i] <- substr(levels_b$b[i], start = 1, stop = (char_n-4))
+}
+levels_a <- unique(left_join(levels_a, levels_b, by = "a"))
+
+g_m$ID_f <- factor(g_m$ID_f, levels = levels_a$b)
+
+f2 <- ggplot(data = g_m, 
+             mapping = aes(x = forcats::fct_rev(ID_f), y = value,  colour = allele), group = key) +
+  geom_boxplot(outlier.shape = 1, outlier.size = 1) +
+  xlab("SNP category") +
+  ylab("estimated coefficient") +
+  scale_y_continuous(breaks = c(-.6, -.4, -.2, 0., .2, .4, .6), limits = c(-.6,.6)) +
+  geom_hline(yintercept = 0, lty = 2, size = .25, col = "gray60") +
+  coord_flip() +
+  scale_color_brewer(palette = "Dark2", "Nº of minor alleles", 
+                     labels = c("0", "1", "2")) +
+  theme_classic(base_line_size = 0.3, base_rect_size = 0.3, base_size = 10) +
+  theme(panel.border = element_blank(),
+         text = element_text(size = 10), 
+         title = element_text(size = 10),
+         axis.title.x = element_text(size = 10),
+         axis.title.y = element_text(size = 10))
+
+plot(f2)
+ggsave(file = "main_effect_2022.jpeg", f2,
+       device = "jpeg", dpi = 300, units = "cm", width = 25, height = 15)
+```
+
+
+# Second step
+
+- Interactions
+```{r}
+int_effect <- readRDS("int_effect/int_effect_dt.txt")
+int_effect$n <- rep(1, nrow(int_effect))
+```
+
+- number of selected pairwise-interaction in 2000 iterations
+```{r}
+n_int <- int_effect %>% 
+  group_by(v1, v2, r) %>% 
+  summarise(count = sum(n))
+
+names(n_int)[1] <- "ID"
+n_int <- left_join(n_int, dplyr::select(vec, numLevels, ID), by = "ID")
+names(n_int)[1] <- "v1"
+
+names(n_int)[2] <- "ID"
+n_int <- left_join(n_int, dplyr::select(vec, numLevels, ID), by = "ID")
+names(n_int)[2] <- "v2"
+
+n_int$int_numLevels <- n_int$numLevels.x*n_int$numLevels.y
+n_int$count_r <- n_int$count/n_int$int_numLevels
+
+n_int <- dplyr::select(n_int, c(v1, v2, r, count_r))
+
+n_int_r <- n_int %>% 
+  dplyr::group_by(r) %>% 
+  summarise(count_int = sum(count_r))
+```
+
+- visualization
+```{r}
+br <- seq(min(n_int_r$count_int), max(n_int_r$count_int), 5)
+f3.0 <- ggplot(n_int_r, aes(x = count_int)) +
+  geom_histogram(breaks = br, fill = "white", colour = "black", position = "identity") +
+  ylab("absolute frequency") +
+  scale_x_continuous(breaks = br) +
+  scale_y_continuous(breaks = c(0, 50, 100, 150, 200, 250, 300, 350, 400), limits = c(0,400)) +
+  xlab("number of selected interactions") +
+  theme_classic(base_line_size = 0.3, base_rect_size = 0.3, base_size = 10)
+plot(f3.0)
+
+ggsave(file = "n_pairwise_interaction_step2_2022.jpeg", f3.0, 
+       device = "jpeg", dpi = 300, units = "cm", width = 25, height = 15)
+```
+
+- number of pairwise-interactions in which a SNP was present (right side) in each iteration
+```{r}
+n_int_v1 <- n_int %>%
+  group_by(v1, r) %>% 
+  summarise(count_int_v1 = sum(count_r))
+```
+
+- number of times a SNP was a pairwise-interaction term in 2000 iterations
+```{r}
+n_int_v1$n <- rep(1, nrow(n_int_v1))
+
+n_int_v1_r <- n_int_v1 %>% 
+  group_by(v1) %>% 
+  summarise(count_rodadas = sum(n))
+
+names(n_int_v1_r)[1] <- "ID"
+n_int_v1_r <- left_join(n_int_v1_r, dplyr::select(total_df, ID, nonzero), by = "ID")
+```
+
+- number of pairwise-interactions in which a SNP was present (left side) in each iteration
+```{r}
+n_int_v2 <- n_int %>%
+  group_by(v2, r) %>% 
+  summarise(count_int_v2 = sum(count_r))
+```
+
+- number of times a SNP was a pairwise-interaction term in 2000 iterations
+```{r}
+n_int_v2$n <- rep(1, nrow(n_int_v2))
+
+n_int_v2_r <- n_int_v2 %>% 
+  group_by(v2) %>% 
+  summarise(count_rodadas = sum(n))
+
+names(n_int_v2_r)[1] <- "ID"
+n_int_v2_r <- left_join(n_int_v2_r, dplyr::select(total_df, ID, nonzero), by = "ID")
+```
+
+- number of times a pairwise-interaction was selected in 2000 iterations
+```{r}
+int_effect_r <- n_int %>% 
+  group_by(v1, v2) %>% 
+  summarise(count_int_espec = sum(count_r))
+
+names(int_effect_r)[1] <- "ID"
+int_effect_r <- left_join(int_effect_r, n_int_v1_r, by = "ID")
+
+names(int_effect_r)[1] <- "v1"
+names(int_effect_r)[2] <- "ID"
+int_effect_r <- left_join(int_effect_r, n_int_v2_r, by = "ID")
+names(int_effect_r)[2] <- "v2"
+
+names(int_effect_r)[1:ncol(int_effect_r)] <- c("v1", "v2", "count_int_espec",
+                                               "count_rodadas.v1", "nonzero.v1",
+                                               "count_rodadas.v2", "nonzero.v2")
+
+int_effect_r$p_int_v1 <- int_effect_r$count_rodadas.v1/ int_effect_r$nonzero.v1
+int_effect_r$p_int_v2 <- int_effect_r$count_rodadas.v2/ int_effect_r$nonzero.v2
+```
+
+- number of times any two variables were selected in first step
+```{r}
+matrix_not_0.2 <- dataframe_subset.2[which(dataframe_subset.2$soma != 0), ]
+matrix_not_0.2 <- matrix_not_0.2[,-ncol(matrix_not_0.2)]
+
+matrix_not_0.2_g <- matrix_not_0.2 %>% 
+  dplyr::select(-ID) %>% 
+  gather(key = "rodada")
+
+matrix_not_0.2_g$ID <- rep(matrix_not_0.2$ID, 2000)
+
+matrix_not_0.2_g <- matrix_not_0.2_g %>% 
+  filter(!is.na(value)) %>% filter(value != 0)
+
+matrix_not_0.2_g$dic <- 1
+
+head(matrix_not_0.2_g)
+
+matrix_not_0.2_s <- matrix_not_0.2_g %>%
+  dplyr::select(-value) %>% 
+  spread(key = "rodada", value = "dic")
+
+head(matrix_not_0.2_s[1:10,1:10])
+
+n_conjunta <- NULL
+i = 1
+for(i in 1:nrow(int_effect_r)){
+  n_conjunta[i] <- table(matrix_not_0.2_s[,which(colnames(matrix_not_0.2_s) == int_effect_r$v1[i])], 
+                         matrix_not_0.2_s[,which(colnames(matrix_not_0.2_s) == int_effect_r$v2[i])])  
+}
+
+n_conjunta_B <- NULL
+soma_b <- NULL
+j = 2
+for(j in 2:2001){
+i = 1
+for(i in 1:nrow(int_effect_r)){
+  n_conjunta_B[i] <- ifelse(!is.na(matrix_not_0.2_s[which(matrix_not_0.2_s$ID == int_effect_r$v1[i]), j]) & 
+                         !is.na(matrix_not_0.2_s[which(matrix_not_0.2_s$ID == int_effect_r$v2[i]), j]), 1, 0)  
+
+  }
+soma_b[j] <- sum(n_conjunta_B, na.rm = TRUE)  
+}
+```
+
+- number of times any two variables were included/selected in first step
+```{r}
+int_effect_r$n_conjunta_I <- n_conjunta
+mean(int_effect_r$n_conjunta_I)
+
+int_effect_r$n_conjunta_S <- n_conjunta
+mean(int_effect_r$n_conjunta_S)
+
+saveRDS(int_effect_r, "int_effect_r.txt")
+```
+
+
+- threshold
+```{r}
+
+int_effect_r <- readRDS("int_effect_r.txt")
+
+threshold2 <- 30
+
+int_effect_r2 <- int_effect_r %>% 
+  filter(count_int_espec > threshold2)
+```
+
+
+```{r}
+int_effect_most_imp1 <- int_effect %>% 
+  filter(v1 == int_effect_r2$v1[1] & v2 == int_effect_r2$v2[1])
+
+int_effect_most_imp2 <- int_effect %>% 
+  filter(v1 == int_effect_r2$v1[2] & v2 == int_effect_r2$v2[2])
+
+
+int_effect_most_imp <- rbind(int_effect_most_imp1, int_effect_most_imp2)
+
+int_effect_most_imp <- int_effect_most_imp %>% 
+  dplyr::select(-c(n, cod_row, cod_col))
+
+names(int_effect_most_imp)[4] <- "ID"
+int_effect_most_imp <- left_join(int_effect_most_imp, rs, by = "ID")
+
+names(int_effect_most_imp)[4] <- "v1"
+names(int_effect_most_imp)[5] <- "ID"
+
+int_effect_most_imp <- left_join(int_effect_most_imp, rs, by = "ID")
+names(int_effect_most_imp)[5] <- "v2"
+
+i = 1
+for(i in 1:nrow(int_effect_most_imp)){
+  int_effect_most_imp$v1_c[i] <- paste(int_effect_most_imp$v1[i], 
+                                       substr(x = int_effect_most_imp$key_col[i], 
+                                              start = nchar(int_effect_most_imp$key_col[i]), 
+                                              stop = nchar(int_effect_most_imp$key_col[i])), sep = "_")
+  
+  int_effect_most_imp$v2_c[i] <- paste(int_effect_most_imp$v2[i], 
+                                       substr(x = int_effect_most_imp$key_row[i], 
+                                              start = nchar(int_effect_most_imp$key_row[i]), 
+                                              stop = nchar(int_effect_most_imp$key_row[i])), sep = "_")
+}
+
+
+i = 1
+for(i in 1:nrow(int_effect_most_imp)){
+  int_effect_most_imp$rs_v1_c[i] <- paste(int_effect_most_imp$rs.x[i], 
+                                       substr(x = int_effect_most_imp$v1_c[i], 
+                                              start = (nchar(int_effect_most_imp$v1_c[i])-2), 
+                                              stop = nchar(int_effect_most_imp$v1_c[i])), sep= "_")
+  
+  int_effect_most_imp$rs_v2_c[i] <- paste(int_effect_most_imp$rs.y[i], 
+                                       substr(x = int_effect_most_imp$v2_c[i], 
+                                              start = (nchar(int_effect_most_imp$v2_c[i])-2), 
+                                              stop = nchar(int_effect_most_imp$v2_c[i])), sep= "_")
+}
+
+int_effect_most_imp$key <- paste(int_effect_most_imp$key_col, int_effect_most_imp$key_row)
+int_effect_most_imp$ID <- paste(int_effect_most_imp$rs_v1_c, int_effect_most_imp$rs_v2_c, sep = ":")
+int_effect_most_imp$ID <- as.factor(int_effect_most_imp$ID)
+levels(int_effect_most_imp$ID)
+
+int_effect_most_imp$ID2 <- factor(int_effect_most_imp$ID,
+                                    levels = c(
+"rs16984239_T_0:rs2118657_T_0", "rs16984239_T_0:rs2118657_T_1", "rs16984239_T_0:rs2118657_T_2",
+"rs16984239_T_1:rs2118657_T_0", "rs16984239_T_1:rs2118657_T_1", "rs16984239_T_1:rs2118657_T_2",
+"rs16984239_T_2:rs2118657_T_0", "rs16984239_T_2:rs2118657_T_1", "rs16984239_T_2:rs2118657_T_2",
+
+"rs16984239_T_0:rs3172469_G_0", "rs16984239_T_0:rs3172469_G_1", "rs16984239_T_0:rs3172469_G_2",
+"rs16984239_T_1:rs3172469_G_0", "rs16984239_T_1:rs3172469_G_1", "rs16984239_T_1:rs3172469_G_2",
+"rs16984239_T_2:rs3172469_G_0", "rs16984239_T_2:rs3172469_G_1", "rs16984239_T_2:rs3172469_G_2"))
+
+i = 1
+for(i in 1:nrow(int_effect_most_imp)){
+  int_effect_most_imp$n_alelo[i] <- paste(substr(x = int_effect_most_imp$key_col[i], 
+                                              start = nchar(int_effect_most_imp$key_col[i]), 
+                                              stop = nchar(int_effect_most_imp$key_col[i])), 
+                                       substr(x = int_effect_most_imp$key_row[i], 
+                                              start = nchar(int_effect_most_imp$key_row[i]), 
+                                              stop = nchar(int_effect_most_imp$key_row[i])), sep = "_")
+}
+```
+
+- pairwise-interaction coefficient
+```{r}
+f3 <- ggplot(data = int_effect_most_imp, 
+             mapping = aes(x =forcats::fct_rev(ID), y = coef, colour = n_alelo), group = key) +
+  geom_boxplot(outlier.shape = 1, outlier.size = 1) +
+  xlab("interaction term") +
+  ylab("Pairwise-interaction coefficient") +
+  coord_flip() +
+  geom_hline(yintercept = 0, lty = 2, size = .25, col = "gray60") +
+  theme_classic() +
+  scale_color_brewer("Nº of minor alleles", 
+                     labels = c("0-0", "0-1", "0-2", "1-0", "1-1", "1-2", "2-0", "2-1", "2-2"), palette = "Set1") +
+  scale_y_continuous(breaks = c(-.7,-.6,-.5, -.4, -.3, -.2, -.1, 0., .1, .2, .3, .4, .5, .6, .7), limits = c(-.7,.7)) +
+  theme_classic(base_line_size = 0.3, base_rect_size = 0.3, base_size = 10) +
+  theme(panel.border = element_blank(),
+         text = element_text(size = 10), 
+         title = element_text(size = 10),
+         axis.title.x = element_text(size = 10),
+         axis.title.y = element_text(size = 10),
+        legend.position="right")
+
+plot(f3)
+
+ggsave(file = "int_effect_2022.jpeg", f3,
+       device = "jpeg", dpi = 300, units = "cm", width = 20, height = 15)
+```
+
