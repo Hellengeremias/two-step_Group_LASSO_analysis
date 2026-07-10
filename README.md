@@ -1,4 +1,4 @@
-# Two-step Group LASSO analysis
+# Two-step Group LASSO Analysis
 
 This repository contains the R scripts used in the study:
 
